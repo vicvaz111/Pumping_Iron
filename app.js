@@ -237,6 +237,29 @@ $('#sets-dec').addEventListener('click', () => {
 let setsState = null; // { exerciseId, total, idx, sets: [{weight,unit,reps}] }
 let lastUnit = localStorage.getItem('pi_unit') || 'lb';
 
+// Weight steppers (for mobile where minus key may be hard to access)
+const weightStep = () => {
+  const el = document.getElementById('weight-input');
+  const s = parseFloat(el?.getAttribute('step') || '0.5');
+  return Number.isFinite(s) && s > 0 ? s : 0.5;
+};
+document.addEventListener('click', (e) => {
+  if (e.target && e.target.id === 'weight-inc') {
+    const el = document.getElementById('weight-input');
+    if (!el) return;
+    const cur = parseFloat(el.value);
+    const val = Number.isFinite(cur) ? cur : 0;
+    el.value = String(val + weightStep());
+  }
+  if (e.target && e.target.id === 'weight-dec') {
+    const el = document.getElementById('weight-input');
+    if (!el) return;
+    const cur = parseFloat(el.value);
+    const val = Number.isFinite(cur) ? cur : 0;
+    el.value = String(val - weightStep());
+  }
+});
+
 $('#btn-begin-sets').addEventListener('click', () => {
   const exerciseId = $('#select-exercise').value;
   const total = Math.max(1, parseInt($('#sets-count').value || '1', 10));
