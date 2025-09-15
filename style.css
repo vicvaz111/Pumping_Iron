@@ -23,7 +23,7 @@ body {
 
 /* Home view background image */
 body.home-bg {
-  background: url('Hero_image.png') center center / cover no-repeat;
+  background: url('./Hero_image.png') center center / cover no-repeat;
 }
 
 .app-header {
