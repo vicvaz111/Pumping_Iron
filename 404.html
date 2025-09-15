@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pumping Iron</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <h1>Pumping Iron</h1>
+    </header>
+    <main id="app" class="container">
+      <section class="card">
+        <h3>Page not found</h3>
+        <p>Redirecting you to the app…</p>
+        <p><a class="btn" href="./">Go to Home</a></p>
+      </section>
+    </main>
+    <script>
+      // Simple redirect for GH Pages deep links
+      setTimeout(function(){ window.location.replace('./'); }, 800);
+    </script>
+  </body>
+  </html>
+
