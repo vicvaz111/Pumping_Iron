@@ -5,7 +5,11 @@ const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 const fmtDate = (d) => new Date(d).toLocaleDateString(undefined, { year: '2-digit', month: 'short', day: '2-digit' });
 const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
-const toISO = (ms) => new Date(ms).toISOString();
+const toLocal = (ms) => new Date(ms).toLocaleString(undefined, {
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', second: '2-digit',
+  hour12: false, timeZoneName: 'short'
+});
 
 // Color palette for series
 const seriesColors = [
@@ -697,7 +701,7 @@ document.addEventListener('click', async (e) => {
       const [workouts, exercises] = await Promise.all([Data.getWorkouts(), Data.getExercises()]);
       const exIdx = indexById(exercises);
       const rows = [];
-      rows.push(['workout_id','workout_name','date_iso','exercise','set_number','weight_lb','reps','unit']);
+      rows.push(['workout_id','workout_name','date_local','exercise','set_number','weight_lb','reps','unit']);
       workouts.forEach(w => {
         (w.entries || []).forEach(en => {
           const exName = exIdx[en.exerciseId]?.name || 'Unknown';
@@ -709,7 +713,7 @@ document.addEventListener('click', async (e) => {
             rows.push([
               w.id,
               w.name,
-              toISO(w.date),
+              toLocal(w.date),
               exName,
               i+1,
               weightLb === '' ? '' : Number(weightLb).toFixed(1),
