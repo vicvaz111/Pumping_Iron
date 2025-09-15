@@ -79,6 +79,10 @@ const Data = {
     await this.sql`insert into workouts(name, date, entries) values (${name}, to_timestamp(${Math.floor(date/1000)}), ${JSON.stringify(entries)}::jsonb)`;
     return await this.getWorkouts();
   },
+  async deleteWorkout(id) {
+    await this.sql`delete from workouts where id = ${id}::int`;
+    return await this.getWorkouts();
+  },
 };
 
 function seedIfEmpty() { /* disabled for GitHub Pages DB-only mode */ }
@@ -383,12 +387,16 @@ async function renderWorkoutsList() {
         <div><strong>${w.name}</strong></div>
         <div class="meta">${fmtDate(w.date)} • ${w.entries.length} exercises</div>
       </div>
-      <div><button class="btn sm ghost" data-open-workout="${w.id}">Open</button></div>
+      <div class="row gap">
+        <button class="btn sm ghost" data-open-workout="${w.id}">Open</button>
+        <button class="btn sm danger" data-del-workout="${w.id}">Delete</button>
+      </div>
     `;
     list.appendChild(row);
   });
 
   list.addEventListener('click', handleOpenWorkout);
+  list.addEventListener('click', handleDeleteWorkout);
 
   function handleOpenWorkout(e) {
     const id = e.target.getAttribute('data-open-workout');
@@ -396,6 +404,19 @@ async function renderWorkoutsList() {
     const w = workouts.find(x => String(x.id) === String(id));
     if (!w) return;
     renderWorkoutDetail(w, exIdx);
+  }
+
+  function handleDeleteWorkout(e) {
+    const id = e.target.getAttribute('data-del-workout');
+    if (!id) return;
+    confirmModal('Delete this workout? This cannot be undone.', async () => {
+      try {
+        await Data.deleteWorkout(id);
+        renderWorkoutsList();
+      } catch (err) {
+        alertModal(`Cannot delete workout. ${err.message || err}`);
+      }
+    });
   }
 }
 
