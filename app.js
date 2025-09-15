@@ -278,8 +278,8 @@ $('#btn-next-set').addEventListener('click', () => {
     alert('Please enter a valid positive number of reps.');
     return;
   }
-  if (!Number.isFinite(weight) || weight < 0) {
-    alert('Please enter a valid non-negative weight.');
+  if (!Number.isFinite(weight)) {
+    alert('Please enter a valid weight.');
     return;
   }
   setsState.sets[setsState.idx] = { weight, unit, reps };
