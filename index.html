@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pumping Iron</title>
+    <link rel="stylesheet" href="style.css?v=3" />
+    <script>
+      // Configure Neon connection for GitHub Pages (public, limited role recommended)
+      window.NEON_DATABASE_URL = 'postgresql://neondb_owner:npg_gmp37cJlUDtz@ep-dark-bird-advtndso-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require';
+    </script>
+  </head>
+  <body>
+    <header class="app-header">
+      <h1>Pumping Iron</h1>
+    </header>
+
+    <main id="app" class="container">
+      <!-- Home Screen -->
+      <section id="view-home" class="view active">
+        <div class="home-grid">
+          <button class="btn primary" data-nav="exercises">Manage Exercises</button>
+          <button class="btn primary" data-nav="new-workout">New Workout</button>
+          <button class="btn primary" data-nav="past-workouts">Past Workouts</button>
+          <button class="btn primary" data-nav="progress">Progress</button>
+        </div>
+      </section>
+
+      <!-- Manage Exercises -->
+      <section id="view-exercises" class="view">
+        <div class="toolbar">
+          <button class="btn ghost" data-nav="home">Back</button>
+          <h2>Manage Exercises</h2>
+          <div class="spacer"></div>
+          <button id="btn-add-exercise" class="btn">Add Exercise</button>
+        </div>
+        <div id="add-exercise-form" class="card hidden">
+          <label class="field inline">
+            <span>Name</span>
+            <input id="add-exercise-input" type="text" placeholder="e.g., Barbell Row" />
+          </label>
+          <div class="row gap">
+            <button id="add-exercise-cancel" class="btn ghost">Cancel</button>
+            <div class="spacer"></div>
+            <button id="add-exercise-save" class="btn">Save</button>
+          </div>
+        </div>
+        <div id="exercise-list" class="card-list"></div>
+      </section>
+
+      <!-- New Workout -->
+      <section id="view-new-workout" class="view">
+        <div class="toolbar">
+          <button class="btn ghost" data-nav="home">Back</button>
+          <h2>New Workout</h2>
+          <div class="spacer"></div>
+        </div>
+
+        <div id="new-workout-chooser" class="card-stack">
+          <div class="card">
+            <h3>Start Workout</h3>
+            <p class="meta" style="margin-top:6px;">Begin fresh or reuse a recent session.</p>
+            <button id="btn-start-fresh-workout" class="btn primary full" type="button" data-start-fresh-workout>Totally New Workout</button>
+          </div>
+          <div class="card">
+            <h3>Recent Workouts</h3>
+            <div id="recent-workouts-list" class="card-list compact"></div>
+          </div>
+        </div>
+
+        <div id="new-workout-builder" class="builder hidden">
+          <div class="card">
+            <div class="row gap builder-head">
+              <button id="btn-back-to-chooser" class="btn ghost sm builder-switch" type="button">← Choose Different Workout</button>
+              <div class="spacer"></div>
+            </div>
+            <label class="field">
+              <span>Workout Name</span>
+              <input id="workout-name" type="text" placeholder="e.g., Push Day" />
+            </label>
+          </div>
+
+          <div class="card">
+            <h3>Select Exercise</h3>
+            <label class="field">
+              <span>Exercise</span>
+              <select id="select-exercise"></select>
+            </label>
+            <label class="field inline">
+              <span>Sets</span>
+              <div class="stepper">
+                <button id="sets-dec" class="btn sm">-</button>
+                <input id="sets-count" type="number" min="1" value="3" />
+                <button id="sets-inc" class="btn sm">+</button>
+              </div>
+            </label>
+            <button id="btn-begin-sets" class="btn">Add Sets for Exercise</button>
+          </div>
+
+          <div id="sets-entry" class="card hidden">
+            <h3 id="sets-entry-title">Enter Reps</h3>
+            <div class="sets-progress" id="sets-progress"></div>
+            <label class="field inline">
+              <span>Weight</span>
+              <div class="stepper">
+                <button id="weight-dec" class="btn sm">-</button>
+                <input id="weight-input" type="number" step="0.5" placeholder="Weight" />
+                <button id="weight-inc" class="btn sm">+</button>
+              </div>
+            </label>
+            <label class="field inline">
+              <span>Unit</span>
+              <select id="weight-unit">
+                <option value="lb" selected>lb</option>
+                <option value="kg">kg</option>
+              </select>
+            </label>
+            <label class="field inline">
+              <span id="set-label">Reps</span>
+              <input id="reps-input" type="number" min="1" placeholder="Reps" />
+            </label>
+            <div class="row gap">
+              <button id="btn-cancel-sets" class="btn ghost">Cancel</button>
+              <div class="spacer"></div>
+              <button id="btn-next-set" class="btn">Next</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Workout Plan</h3>
+            <div id="workout-plan"></div>
+            <div class="row gap">
+              <button class="btn ghost" data-nav="home">Discard</button>
+              <div class="spacer"></div>
+              <button id="btn-finish-workout" class="btn danger">Finish Workout</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Past Workouts -->
+      <section id="view-past-workouts" class="view">
+        <div class="toolbar">
+          <button class="btn ghost" data-nav="home">Back</button>
+          <h2>Past Workouts</h2>
+          <div class="spacer"></div>
+          <button id="btn-export-csv" class="btn">Export CSV</button>
+        </div>
+        <div id="workouts-list" class="card-list"></div>
+        <div id="workout-detail" class="card hidden"></div>
+      </section>
+
+      <!-- Progress -->
+      <section id="view-progress" class="view">
+        <div class="toolbar">
+          <button class="btn ghost" data-nav="home">Back</button>
+          <h2>Progress</h2>
+          <div class="spacer"></div>
+        </div>
+        <div class="card">
+          <label class="field">
+            <span>Exercise</span>
+            <select id="progress-exercise"></select>
+          </label>
+        </div>
+        <div class="card">
+          <canvas id="progress-chart" width="400" height="260"></canvas>
+          <div id="chart-legend" class="legend"></div>
+        </div>
+      </section>
+    </main>
+
+    <div id="modal" class="modal hidden" role="dialog" aria-modal="true">
+      <div class="modal-content">
+        <p id="modal-message">Are you sure?</p>
+        <div class="row gap">
+          <button id="modal-cancel" class="btn ghost">Cancel</button>
+          <div class="spacer"></div>
+          <button id="modal-confirm" class="btn danger">Yes</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="app.js?v=3"></script>
+  </body>
+  </html>
