@@ -915,7 +915,7 @@ function clearChart({ ctx, width, height }) {
   ctx.fillRect(0, 0, width, height);
 }
 
-function drawAxes(ctx, width, height, padding, labels, yMax) {
+function drawAxes(ctx, width, height, padding, labels, yMax, xScale) {
   ctx.strokeStyle = '#e5e7eb';
   ctx.lineWidth = 1;
   // horizontal grid lines
@@ -947,7 +947,7 @@ function drawAxes(ctx, width, height, padding, labels, yMax) {
   const step = Math.max(1, Math.floor(labels.length / 5));
   labels.forEach((lab, i) => {
     if (i % step !== 0) return;
-    const x = padding + i * ((width - padding*2) / Math.max(1, labels.length - 1));
+    const x = xScale(i);
     ctx.fillText(lab, x - 16, height - padding + 14);
   });
 }
@@ -955,7 +955,7 @@ function drawAxes(ctx, width, height, padding, labels, yMax) {
 async function drawProgressChart(exerciseId) {
   const chart = getChartContext();
   clearChart(chart);
-  const { labels, series } = await gatherExerciseProgress(exerciseId);
+  const { labels, series, domain } = await gatherExerciseProgress(exerciseId);
 
   const padding = 40;
   const { ctx, width, height } = chart;
@@ -964,10 +964,13 @@ async function drawProgressChart(exerciseId) {
   const allY = series.flatMap(s => s.visible ? s.points.map(p => p.y) : []);
   const yMax = Math.max(10, Math.max(0, ...allY) * 1.2);
 
-  drawAxes(ctx, width, height, padding, labels, yMax);
+  const xDomainMin = Number.isFinite(domain?.min) ? domain.min : 0;
+  const xDomainMax = Number.isFinite(domain?.max) ? domain.max : Math.max(0, labels.length - 1);
+  const domainSpanRaw = xDomainMax - xDomainMin;
+  const domainSpan = Math.max(1e-6, domainSpanRaw === 0 ? 1 : domainSpanRaw);
+  const xScale = (value) => padding + ((value - xDomainMin) / domainSpan) * (width - padding*2);
 
-  // Scales
-  const xScale = (i) => padding + (labels.length <= 1 ? 0 : i * ((width - padding*2) / (labels.length - 1)));
+  drawAxes(ctx, width, height, padding, labels, yMax, xScale);
   const yScale = (v) => padding + (height - padding*2) * (1 - v / yMax);
 
   // Draw series lines
@@ -977,7 +980,7 @@ async function drawProgressChart(exerciseId) {
     ctx.lineWidth = 2;
     ctx.beginPath();
     s.points.forEach((p, i) => {
-      const x = xScale(p.x);
+      const x = xScale(p.x + (p.offset ?? 0));
       const y = yScale(p.y);
       if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     });
@@ -985,7 +988,7 @@ async function drawProgressChart(exerciseId) {
     // Points
     ctx.fillStyle = s.color;
     s.points.forEach(p => {
-      const x = xScale(p.x), y = yScale(p.y);
+      const x = xScale(p.x + (p.offset ?? 0)), y = yScale(p.y);
       ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI*2); ctx.fill();
     });
   });
@@ -1010,12 +1013,14 @@ async function drawProgressChart(exerciseId) {
     const rect = chart.canvas.getBoundingClientRect();
     const mx = ev.clientX - rect.left;
     const my = ev.clientY - rect.top;
-    const hit = findClosestPoint(series, labels, mx, my, padding, width, height, yMax);
+    const hit = findClosestPoint(series, labels, mx, my, padding, width, height, yMax, xScale);
     if (hit) {
       tooltip.style.display = 'block';
       tooltip.style.left = `${ev.clientX + 10}px`;
       tooltip.style.top = `${ev.clientY + 10}px`;
-      tooltip.innerHTML = `${hit.seriesName}<br>${labels[hit.point.x]} — ${hit.point.y.toFixed(1)} lb • ${hit.point.reps} reps`;
+      const label = labels[hit.point.x] || '';
+      const repsText = Number.isFinite(hit.point.reps) ? `${hit.point.reps} reps` : 'reps n/a';
+      tooltip.innerHTML = `${hit.seriesName}<br>${label} — ${hit.point.y.toFixed(1)} lb • ${repsText}`;
     } else {
       tooltip.style.display = 'none';
     }
@@ -1042,15 +1047,14 @@ function createOrGetTooltip() {
   return el;
 }
 
-function findClosestPoint(series, labels, mx, my, padding, width, height, yMax) {
+function findClosestPoint(series, labels, mx, my, padding, width, height, yMax, xScale) {
   if (labels.length === 0) return null;
-  const xScale = (i) => padding + (labels.length <= 1 ? 0 : i * ((width - padding*2) / (labels.length - 1)));
   const yScale = (v) => padding + (height - padding*2) * (1 - v / yMax);
   let best = null;
   series.forEach(s => {
     if (!s.visible) return;
     s.points.forEach(p => {
-      const x = xScale(p.x), y = yScale(p.y);
+      const x = xScale(p.x + (p.offset ?? 0)), y = yScale(p.y);
       const dx = mx - x, dy = my - y;
       const d2 = dx*dx + dy*dy;
       if (best == null || d2 < best.d2) best = { d2, seriesName: s.name, point: p };
