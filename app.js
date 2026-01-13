@@ -83,6 +83,17 @@ const Data = {
     await this.sql`delete from workouts where id = ${id}::int`;
     return await this.getWorkouts();
   },
+  async updateWorkout(id, workout) {
+  const { name, date, entries } = workout;
+  await this.sql`
+    update workouts
+    set name = ${name},
+        date = to_timestamp(${Math.floor(date / 1000)}),
+        entries = ${JSON.stringify(entries)}::jsonb
+    where id = ${id}::int
+  `;
+  return await this.getWorkouts();
+  }
 };
 
 function seedIfEmpty() { /* disabled for GitHub Pages DB-only mode */ }
@@ -228,6 +239,9 @@ const workoutDraft = {
   entries: [], // { exerciseId, sets: [{ weight, unit, reps }] }
 };
 
+let activeWorkoutId = null; // DB id if editing/continuing a workout
+let saveDraftTimeout = null;
+
 async function initNewWorkoutView() {
   await refreshNewWorkoutSelectors({ includeWorkouts: true });
   const hasDraft = workoutDraft.entries.length > 0 || (workoutDraft.name && workoutDraft.name.trim());
@@ -345,6 +359,8 @@ function setRecentWorkoutsMessage(message) {
 
 function loadWorkoutIntoDraft(workout) {
   if (!workout) return;
+  activeWorkoutId = workout.id;
+
   workoutDraft.name = workout.name || '';
   workoutDraft.entries = (workout.entries || []).map(normalizeEntry);
   showNewWorkoutBuilder();
@@ -381,8 +397,42 @@ function normalizeSet(set) {
 
 function handleStartFreshWorkout() {
   resetWorkoutDraft();
+  activeWorkoutId = null;
   showNewWorkoutBuilder();
   $('#workout-name')?.focus();
+}
+
+function scheduleWorkoutAutosave() {
+  if (!workoutDraft.entries.length && !workoutDraft.name) return;
+
+  clearTimeout(saveDraftTimeout);
+  saveDraftTimeout = setTimeout(async () => {
+    const entriesForSave = workoutDraft.entries.map(({ key, ...rest }) => ({
+      ...rest,
+      sets: (rest.sets || []).map(s => ({
+        weight: s.weight == null ? null : s.weight,
+        unit: s.unit || 'lb',
+        reps: s.reps,
+      })),
+    }));
+
+    const payload = {
+      name: workoutDraft.name || 'In-progress workout',
+      date: Date.now(),
+      entries: entriesForSave,
+    };
+
+    try {
+      if (activeWorkoutId) {
+        await Data.updateWorkout(activeWorkoutId, payload);
+      } else {
+        const workouts = await Data.addWorkout(payload);
+        activeWorkoutId = workouts[0]?.id ?? null;
+      }
+    } catch (e) {
+      console.error('Autosave failed:', e);
+    }
+  }, 500); // debounce
 }
 
 function handleStartRecentWorkout(workoutId) {
@@ -398,6 +448,7 @@ document.getElementById('btn-back-to-chooser')?.addEventListener('click', () => 
 
 $('#workout-name').addEventListener('input', (e) => {
   workoutDraft.name = e.target.value;
+  scheduleWorkoutAutosave();
 });
 
 $('#sets-inc').addEventListener('click', () => {
@@ -531,6 +582,7 @@ function commitSetsState() {
   setsState = null;
   $('#sets-entry')?.classList.add('hidden');
   renderWorkoutPlan();
+  scheduleWorkoutAutosave();
 }
 
 $('#btn-next-set').addEventListener('click', () => {
@@ -632,6 +684,7 @@ function handlePlanClick(e) {
   if (removeKey) {
     workoutDraft.entries = workoutDraft.entries.filter(en => String(en.key) !== String(removeKey));
     renderWorkoutPlan();
+    scheduleWorkoutAutosave();
   }
 }
 
@@ -714,6 +767,7 @@ function onDragEnd(e) {
   workoutDraft.entries = orderedKeys.map(key => entryMap[key]).filter(Boolean);
   dragState = null;
   renderWorkoutPlan();
+  scheduleWorkoutAutosave();
 }
 
 $('#btn-finish-workout').addEventListener('click', () => {
@@ -737,6 +791,7 @@ $('#btn-finish-workout').addEventListener('click', () => {
       })),
     }));
     await Data.addWorkout({ id: uid(), name: workoutDraft.name.trim(), date: Date.now(), entries: entriesForSave });
+    activeWorkoutId = null;
     resetWorkoutDraft();
     newWorkoutMode = 'chooser';
     showView('past-workouts');
