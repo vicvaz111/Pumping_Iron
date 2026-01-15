@@ -237,6 +237,7 @@ const RECENT_WORKOUT_LIMIT = 5;
 const workoutDraft = {
   name: '',
   entries: [], // { exerciseId, sets: [{ weight, unit, reps }] }
+  date: null,
 };
 
 let activeWorkoutId = null; // DB id if editing/continuing a workout
@@ -301,7 +302,9 @@ function showNewWorkoutBuilder() {
 function resetWorkoutDraft() {
   workoutDraft.name = '';
   workoutDraft.entries = [];
+  workoutDraft.date = Date.now();
   setsState = null;
+  activeWorkoutId = null;
   const nameInput = $('#workout-name');
   if (nameInput) nameInput.value = '';
   $('#sets-entry')?.classList.add('hidden');
@@ -359,10 +362,11 @@ function setRecentWorkoutsMessage(message) {
 
 function loadWorkoutIntoDraft(workout) {
   if (!workout) return;
-  activeWorkoutId = workout.id;
+  activeWorkoutId = null;
 
   workoutDraft.name = workout.name || '';
   workoutDraft.entries = (workout.entries || []).map(normalizeEntry);
+  workoutDraft.date = Date.now();
   showNewWorkoutBuilder();
   renderWorkoutPlan();
   const nameInput = $('#workout-name');
@@ -418,7 +422,7 @@ function scheduleWorkoutAutosave() {
 
     const payload = {
       name: workoutDraft.name || 'In-progress workout',
-      date: Date.now(),
+      date: workoutDraft.date || Date.now(),
       entries: entriesForSave,
     };
 
@@ -790,7 +794,12 @@ $('#btn-finish-workout').addEventListener('click', () => {
         reps: s.reps,
       })),
     }));
-    await Data.addWorkout({ id: uid(), name: workoutDraft.name.trim(), date: Date.now(), entries: entriesForSave });
+    const payload = { name: workoutDraft.name.trim(), date: workoutDraft.date || Date.now(), entries: entriesForSave };
+    if (activeWorkoutId) {
+      await Data.updateWorkout(activeWorkoutId, payload);
+    } else {
+      await Data.addWorkout(payload);
+    }
     activeWorkoutId = null;
     resetWorkoutDraft();
     newWorkoutMode = 'chooser';
