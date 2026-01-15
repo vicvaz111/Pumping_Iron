@@ -139,6 +139,13 @@ document.addEventListener('click', (e) => {
   if (startExistingBtn) {
     const workoutId = startExistingBtn.getAttribute('data-start-workout');
     handleStartRecentWorkout(workoutId);
+    return;
+  }
+
+  const resumeBtn = e.target.closest('[data-resume-workout]');
+  if (resumeBtn) {
+    const workoutId = resumeBtn.getAttribute('data-resume-workout');
+    handleResumeWorkout(workoutId);
   }
 });
 
@@ -330,16 +337,21 @@ function renderRecentWorkouts() {
     list.appendChild(empty);
     return;
   }
-  toRender.forEach((w) => {
+  toRender.forEach((w, idx) => {
     const row = document.createElement('div');
     row.className = 'item-row';
+    let actions = `<button class="btn sm" type="button" data-start-workout="${w.id}">Start</button>`;
+    if (idx === 0) {
+      actions = `<button class="btn sm" type="button" data-resume-workout="${w.id}">Resume</button>` + actions;
+    }
+
     row.innerHTML = `
       <div>
         <div><strong>${w.name}</strong></div>
         <div class="meta">${fmtDate(w.date)} • ${w.entries.length} exercises</div>
       </div>
       <div class="row gap">
-        <button class="btn sm" type="button" data-start-workout="${w.id}">Start</button>
+        ${actions}
       </div>
     `;
     list.appendChild(row);
@@ -444,6 +456,19 @@ function handleStartRecentWorkout(workoutId) {
   const workout = recentWorkouts.find(w => String(w.id) === String(workoutId));
   if (!workout) return;
   loadWorkoutIntoDraft(workout);
+}
+
+function handleResumeWorkout(workoutId) {
+  if (!workoutId) return;
+  const workout = recentWorkouts.find(w => String(w.id) === String(workoutId));
+  if (!workout) return;
+
+  activeWorkoutId = workout.id;
+  workoutDraft.name = workout.name || '';
+  workoutDraft.entries = (workout.entries || []).map(normalizeEntry);
+  workoutDraft.date = workout.date;
+  showNewWorkoutBuilder();
+  renderWorkoutPlan();
 }
 
 document.getElementById('btn-back-to-chooser')?.addEventListener('click', () => {
