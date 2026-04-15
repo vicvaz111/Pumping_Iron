@@ -109,15 +109,77 @@ body.home-bg {
 #workout-plan { display: grid; gap: 10px; position: relative; }
 #workout-plan.reordering { position: relative; }
 .plan-entry {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  gap: 12px;
-  align-items: center;
+  display: block;
+  padding: 12px;
 }
-.plan-entry .entry-main { display: flex; align-items: center; gap: 12px; }
+.plan-entry .entry-shell {
+  width: 100%;
+  display: grid;
+  gap: 12px;
+}
+.plan-entry .entry-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+.plan-entry .entry-main { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
 .plan-entry .entry-body { display: grid; gap: 4px; }
-.plan-entry .entry-actions { display: flex; gap: 8px; }
+.plan-entry .entry-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.plan-entry .entry-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.plan-entry .entry-title {
+  overflow-wrap: anywhere;
+}
+.plan-entry.skipped .entry-title {
+  text-decoration: line-through;
+  opacity: 0.7;
+}
 .plan-entry.dragging { pointer-events: none; }
+.plan-entry-editor {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid #e5ddff;
+  padding-top: 12px;
+}
+.set-rows {
+  display: grid;
+  gap: 10px;
+}
+.set-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  gap: 10px;
+  align-items: end;
+}
+.entry-editor-actions {
+  justify-content: flex-start;
+}
+.exercise-comment {
+  margin: 0;
+}
+.comment-text {
+  white-space: pre-wrap;
+}
+
+@media (max-width: 720px) {
+  .plan-entry .entry-head {
+    flex-direction: column;
+  }
+
+  .plan-entry .entry-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .set-row {
+    grid-template-columns: 1fr;
+  }
+}
 
 .drag-handle {
   border: none;
@@ -150,13 +212,14 @@ body.dragging-reorder .drag-handle { cursor: grabbing; }
 .field { display: grid; gap: 6px; margin: 10px 0; }
 .field.inline { grid-template-columns: 1fr auto; align-items: center; }
 .field span { font-size: 14px; color: var(--muted); }
-.field input, .field select {
+.field input, .field select, .field textarea, .exercise-name-input {
   width: 100%;
   padding: 10px 12px;
   border-radius: 10px;
   border: 1px solid #ddd;
   background: white;
   font-size: 16px;
+  font-family: inherit;
 }
 
 .item-row {
@@ -175,6 +238,22 @@ body.dragging-reorder .drag-handle { cursor: grabbing; }
 }
 .item-row.header .meta { color: var(--muted); }
 .item-row .meta { font-size: 13px; color: var(--muted); }
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: #efe9ff;
+  color: #4c3f74;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.past-entry.skipped .entry-title {
+  text-decoration: line-through;
+  opacity: 0.7;
+}
 
 .stepper { display: inline-flex; align-items: center; gap: 6px; }
 .stepper input { width: 70px; text-align: center; }

@@ -5,6 +5,12 @@ const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 const fmtDate = (d) => new Date(d).toLocaleDateString(undefined, { year: '2-digit', month: 'short', day: '2-digit' });
 const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
+const escapeHtml = (value) => String(value ?? '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;');
 const toLocal = (ms) => new Date(ms).toLocaleString(undefined, {
   year: 'numeric', month: '2-digit', day: '2-digit',
   hour: '2-digit', minute: '2-digit', second: '2-digit',
@@ -139,10 +145,19 @@ document.addEventListener('click', (e) => {
   if (startExistingBtn) {
     const workoutId = startExistingBtn.getAttribute('data-start-workout');
     handleStartRecentWorkout(workoutId);
+    return;
+  }
+
+  const resumeBtn = e.target.closest('[data-resume-workout]');
+  if (resumeBtn) {
+    const workoutId = resumeBtn.getAttribute('data-resume-workout');
+    handleResumeWorkout(workoutId);
   }
 });
 
 // ---- Manage Exercises ----
+let exerciseEditMode = false;
+
 async function renderExerciseList() {
   const list = $('#exercise-list');
   let data = [];
@@ -155,21 +170,37 @@ async function renderExerciseList() {
   header.className = 'item-row header';
   header.innerHTML = `
     <div><strong>Name</strong></div>
-    <div class="row gap"><span class="meta">Actions</span></div>
+    <div class="row gap"><span class="meta">${exerciseEditMode ? '' : 'Actions'}</span></div>
   `;
   list.appendChild(header);
+
+  const editBtn = $('#btn-edit-exercises');
+  if (editBtn) {
+    editBtn.textContent = exerciseEditMode ? 'Save Changes' : 'Edit List';
+    editBtn.classList.toggle('primary', exerciseEditMode);
+    editBtn.classList.toggle('ghost', !exerciseEditMode);
+  }
 
   // Data rows
   data.forEach(ex => {
     const row = document.createElement('div');
     row.className = 'item-row';
-    row.innerHTML = `
-      <div>
-        <div class="name">${ex.name}</div>
-      </div>
-      <div class="row gap">
+
+    const nameHtml = exerciseEditMode
+      ? `<input type="text" class="exercise-name-input" data-id="${ex.id}" value="${ex.name.replace(/"/g, '&quot;')}" />`
+      : `<div class="name">${ex.name}</div>`;
+
+    const actionsHtml = exerciseEditMode ? '' : `
         <button class="btn sm ghost" data-edit="${ex.id}">Edit</button>
         <button class="btn sm danger" data-del="${ex.id}">Delete</button>
+    `;
+
+    row.innerHTML = `
+      <div>
+        ${nameHtml}
+      </div>
+      <div class="row gap">
+        ${actionsHtml}
       </div>
     `;
     list.appendChild(row);
@@ -190,9 +221,13 @@ document.getElementById('add-exercise-cancel').addEventListener('click', () => {
 
 async function saveNewExerciseFromInput() {
   const input = document.getElementById('add-exercise-input');
-  const name = (input.value || '').trim();
-  if (!name) { alert('Please enter an exercise name.'); return; }
-  try { await Data.addExercise(name); }
+  const raw = (input.value || '').trim();
+  if (!raw) { alert('Please enter exercise name(s).'); return; }
+
+  const names = raw.split(/\n|,/).map(s => s.trim()).filter(Boolean);
+  if (!names.length) return;
+
+  try { await Promise.all(names.map(n => Data.addExercise(n))); }
   catch (e) { return alertModal(`Cannot add exercise. ${e.message || e}`); }
   renderExerciseList();
   refreshNewWorkoutSelectors();
@@ -200,8 +235,29 @@ async function saveNewExerciseFromInput() {
 }
 
 document.getElementById('add-exercise-save').addEventListener('click', saveNewExerciseFromInput);
-document.getElementById('add-exercise-input').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') saveNewExerciseFromInput();
+
+$('#btn-edit-exercises')?.addEventListener('click', async () => {
+  if (!exerciseEditMode) {
+    exerciseEditMode = true;
+    renderExerciseList();
+  } else {
+    // Save changes
+    const inputs = $$('.exercise-name-input');
+    const updates = [];
+    inputs.forEach(input => {
+      const id = input.getAttribute('data-id');
+      const newName = input.value.trim();
+      if (newName && newName !== input.defaultValue) {
+        updates.push(Data.updateExercise(id, newName));
+      }
+    });
+    try { await Promise.all(updates); }
+    catch (e) { alertModal(`Error saving changes: ${e.message}`); }
+    
+    exerciseEditMode = false;
+    renderExerciseList();
+    refreshNewWorkoutSelectors();
+  }
 });
 
 $('#exercise-list').addEventListener('click', async (e) => {
@@ -237,6 +293,7 @@ const RECENT_WORKOUT_LIMIT = 5;
 const workoutDraft = {
   name: '',
   entries: [], // { exerciseId, sets: [{ weight, unit, reps }] }
+  date: null,
 };
 
 let activeWorkoutId = null; // DB id if editing/continuing a workout
@@ -299,12 +356,13 @@ function showNewWorkoutBuilder() {
 }
 
 function resetWorkoutDraft() {
+  clearTimeout(saveDraftTimeout);
   workoutDraft.name = '';
   workoutDraft.entries = [];
-  setsState = null;
+  workoutDraft.date = Date.now();
+  activeWorkoutId = null;
   const nameInput = $('#workout-name');
   if (nameInput) nameInput.value = '';
-  $('#sets-entry')?.classList.add('hidden');
   renderWorkoutPlan();
 }
 
@@ -327,16 +385,21 @@ function renderRecentWorkouts() {
     list.appendChild(empty);
     return;
   }
-  toRender.forEach((w) => {
+  toRender.forEach((w, idx) => {
     const row = document.createElement('div');
     row.className = 'item-row';
+    let actions = `<button class="btn sm" type="button" data-start-workout="${w.id}">Start</button>`;
+    if (idx === 0) {
+      actions = `<button class="btn sm" type="button" data-resume-workout="${w.id}">Resume</button>` + actions;
+    }
+
     row.innerHTML = `
       <div>
         <div><strong>${w.name}</strong></div>
         <div class="meta">${fmtDate(w.date)} • ${w.entries.length} exercises</div>
       </div>
       <div class="row gap">
-        <button class="btn sm" type="button" data-start-workout="${w.id}">Start</button>
+        ${actions}
       </div>
     `;
     list.appendChild(row);
@@ -359,39 +422,112 @@ function setRecentWorkoutsMessage(message) {
 
 function loadWorkoutIntoDraft(workout) {
   if (!workout) return;
-  activeWorkoutId = workout.id;
+  activeWorkoutId = null;
 
   workoutDraft.name = workout.name || '';
-  workoutDraft.entries = (workout.entries || []).map(normalizeEntry);
+  workoutDraft.entries = (workout.entries || []).map(entry => normalizeEntry(entry, { isExpanded: false }));
+  workoutDraft.date = Date.now();
   showNewWorkoutBuilder();
   renderWorkoutPlan();
   const nameInput = $('#workout-name');
   if (nameInput) nameInput.focus();
 }
 
-function normalizeEntry(entry) {
+let lastUnit = localStorage.getItem('pi_unit') || 'lb';
+
+function createEmptySet(unit = 'lb') {
+  return { weight: null, unit: unit || 'lb', reps: null };
+}
+
+function normalizeEntry(entry, options = {}) {
+  const { isExpanded = false } = options;
   return {
     key: uid(),
     exerciseId: entry.exerciseId,
-    sets: (entry.sets || []).map(normalizeSet),
+    skipped: Boolean(entry?.skipped),
+    comment: typeof entry?.comment === 'string' ? entry.comment : '',
+    isExpanded,
+    sets: Array.isArray(entry?.sets) ? entry.sets.map(normalizeSet) : [],
   };
 }
 
 function normalizeSet(set) {
   if (typeof set === 'number') {
-    return { weight: null, unit: 'lb', reps: Number(set) || 0 };
+    const repsNum = Number(set);
+    return { weight: null, unit: 'lb', reps: Number.isFinite(repsNum) ? repsNum : null };
   }
   if (!set || typeof set !== 'object') {
-    return { weight: null, unit: 'lb', reps: 0 };
+    return createEmptySet();
   }
-  const repsNum = Number(set.reps);
+  const repsRaw = set.reps;
+  const repsNum = repsRaw === '' || repsRaw == null ? null : Number(repsRaw);
   const rawWeight = set.weight;
   const weightNum = rawWeight === '' || rawWeight == null ? null : Number(rawWeight);
   const unit = set.unit || 'lb';
   return {
     weight: Number.isFinite(weightNum) ? weightNum : null,
     unit,
-    reps: Number.isFinite(repsNum) ? repsNum : 0,
+    reps: Number.isFinite(repsNum) ? repsNum : null,
+  };
+}
+
+function serializeWorkoutEntry(entry) {
+  return {
+    exerciseId: entry.exerciseId,
+    skipped: Boolean(entry.skipped),
+    comment: (entry.comment || '').trim(),
+    sets: (entry.sets || []).map(normalizeSet),
+  };
+}
+
+function getWorkoutEntriesForSave() {
+  return workoutDraft.entries.map(serializeWorkoutEntry);
+}
+
+function getEntryByKey(entryKey) {
+  return workoutDraft.entries.find(en => String(en.key) === String(entryKey));
+}
+
+function formatSetForDisplay(set, idx) {
+  if (!set) return `Set ${idx + 1}`;
+  const normalized = normalizeSet(set);
+  const hasReps = Number.isFinite(normalized.reps);
+  const hasWeight = normalized.weight != null;
+  if (!hasReps && !hasWeight) return `Set ${idx + 1}: planned`;
+  if (!hasWeight) return `Set ${idx + 1}: ${normalized.reps} reps`;
+  if (!hasReps) return `Set ${idx + 1}: ${normalized.weight} ${normalized.unit || 'lb'}`;
+  return `Set ${idx + 1}: ${normalized.weight} ${normalized.unit || 'lb'}×${normalized.reps}`;
+}
+
+function getEntrySetSummary(entry) {
+  const setsSummary = (entry.sets || []).map((set, idx) => formatSetForDisplay(set, idx)).join(', ');
+  if (setsSummary) return setsSummary;
+  return entry.skipped ? 'Skipped' : 'No sets recorded.';
+}
+
+function getEntrySummary(entry) {
+  const parts = [];
+  const setsSummary = getEntrySetSummary(entry);
+  if (entry.skipped && setsSummary !== 'Skipped') parts.push('Skipped');
+  if (setsSummary) parts.push(setsSummary);
+  if ((entry.comment || '').trim()) parts.push(`Comment: ${(entry.comment || '').trim()}`);
+  return parts.join(' • ');
+}
+
+function renderUnitOptions(selectedUnit) {
+  return ['lb', 'kg']
+    .map(unit => `<option value="${unit}"${unit === selectedUnit ? ' selected' : ''}>${unit}</option>`)
+    .join('');
+}
+
+function createWorkoutDraftEntry(exerciseId, totalSets) {
+  return {
+    key: uid(),
+    exerciseId,
+    skipped: false,
+    comment: '',
+    isExpanded: true,
+    sets: Array.from({ length: totalSets }, () => createEmptySet(lastUnit)),
   };
 }
 
@@ -407,19 +543,10 @@ function scheduleWorkoutAutosave() {
 
   clearTimeout(saveDraftTimeout);
   saveDraftTimeout = setTimeout(async () => {
-    const entriesForSave = workoutDraft.entries.map(({ key, ...rest }) => ({
-      ...rest,
-      sets: (rest.sets || []).map(s => ({
-        weight: s.weight == null ? null : s.weight,
-        unit: s.unit || 'lb',
-        reps: s.reps,
-      })),
-    }));
-
     const payload = {
       name: workoutDraft.name || 'In-progress workout',
-      date: Date.now(),
-      entries: entriesForSave,
+      date: workoutDraft.date || Date.now(),
+      entries: getWorkoutEntriesForSave(),
     };
 
     try {
@@ -432,7 +559,7 @@ function scheduleWorkoutAutosave() {
     } catch (e) {
       console.error('Autosave failed:', e);
     }
-  }, 500); // debounce
+  }, 500);
 }
 
 function handleStartRecentWorkout(workoutId) {
@@ -440,6 +567,19 @@ function handleStartRecentWorkout(workoutId) {
   const workout = recentWorkouts.find(w => String(w.id) === String(workoutId));
   if (!workout) return;
   loadWorkoutIntoDraft(workout);
+}
+
+function handleResumeWorkout(workoutId) {
+  if (!workoutId) return;
+  const workout = recentWorkouts.find(w => String(w.id) === String(workoutId));
+  if (!workout) return;
+
+  activeWorkoutId = workout.id;
+  workoutDraft.name = workout.name || '';
+  workoutDraft.entries = (workout.entries || []).map(entry => normalizeEntry(entry, { isExpanded: false }));
+  workoutDraft.date = workout.date;
+  showNewWorkoutBuilder();
+  renderWorkoutPlan();
 }
 
 document.getElementById('btn-back-to-chooser')?.addEventListener('click', () => {
@@ -460,178 +600,16 @@ $('#sets-dec').addEventListener('click', () => {
   input.value = Math.max(1, parseInt(input.value || '1', 10) - 1);
 });
 
-let setsState = null; // { exerciseId, total, idx, sets, entryKey?, initialSets: [] }
-let lastUnit = localStorage.getItem('pi_unit') || 'lb';
-
-// Weight steppers (for mobile where minus key may be hard to access)
-const weightStep = () => {
-  const el = document.getElementById('weight-input');
-  const s = parseFloat(el?.getAttribute('step') || '0.5');
-  return Number.isFinite(s) && s > 0 ? s : 0.5;
-};
-document.addEventListener('click', (e) => {
-  if (e.target && e.target.id === 'weight-inc') {
-    const el = document.getElementById('weight-input');
-    if (!el) return;
-    const cur = parseFloat(el.value);
-    const val = Number.isFinite(cur) ? cur : 0;
-    el.value = String(val + weightStep());
-  }
-  if (e.target && e.target.id === 'weight-dec') {
-    const el = document.getElementById('weight-input');
-    if (!el) return;
-    const cur = parseFloat(el.value);
-    const val = Number.isFinite(cur) ? cur : 0;
-    el.value = String(val - weightStep());
-  }
-});
-
-function getExerciseName(id) {
-  const match = currentExercises.find(ex => String(ex.id) === String(id));
-  return match?.name || 'Unknown';
-}
-
-function openSetsEntry({ exerciseId, total, entryKey = null, initialSets = [] }) {
-  const normalizedInitial = initialSets.map(s => (s == null ? null : normalizeSet(s)));
-  const totalSets = Math.max(1, normalizedInitial.length || total);
-  const paddedInitial = Array.from({ length: totalSets }, (_, idx) => normalizedInitial[idx] ?? null);
-  setsState = {
-    exerciseId,
-    total: totalSets,
-    idx: 0,
-    sets: [],
-    entryKey,
-    initialSets: paddedInitial,
-  };
-  const setsInput = $('#sets-count');
-  if (setsInput) setsInput.value = totalSets;
-  const setsEntry = $('#sets-entry');
-  if (setsEntry) setsEntry.classList.remove('hidden');
-  $('#sets-entry-title').textContent = entryKey ? `Edit Sets: ${getExerciseName(exerciseId)}` : `Enter Reps: ${getExerciseName(exerciseId)}`;
-  updateSetLabel();
-  populateSetEntryFields();
-  renderSetsProgress();
-  updateSetActionButton();
-  $('#reps-input')?.focus();
-}
-
 $('#btn-begin-sets').addEventListener('click', () => {
   const exerciseId = $('#select-exercise').value;
   const total = Math.max(1, parseInt($('#sets-count').value || '1', 10));
   if (!exerciseId || !total) return;
-  openSetsEntry({ exerciseId, total });
-});
 
-function populateSetEntryFields() {
-  if (!setsState) return;
-  const { idx, sets, initialSets } = setsState;
-  const source = sets[idx] ?? initialSets[idx] ?? { weight: null, unit: lastUnit, reps: '' };
-  const weightEl = $('#weight-input');
-  const unitEl = $('#weight-unit');
-  const repsEl = $('#reps-input');
-  if (weightEl) weightEl.value = source.weight != null ? String(source.weight) : '';
-  if (unitEl) unitEl.value = source.unit || lastUnit;
-  if (repsEl) repsEl.value = source.reps ? String(source.reps) : '';
-}
-
-function updateSetLabel() {
-  if (!setsState) return;
-  $('#set-label').textContent = `Set ${Math.min(setsState.idx + 1, setsState.total)} of ${setsState.total}`;
-}
-
-function updateSetActionButton() {
-  const btn = $('#btn-next-set');
-  if (!btn || !setsState) return;
-  const isLast = setsState.idx >= setsState.total - 1;
-  btn.textContent = isLast ? (setsState.entryKey ? 'Save Changes' : 'Finish Exercise') : 'Next';
-}
-
-function renderSetsProgress() {
-  const cont = $('#sets-progress');
-  if (!cont || !setsState) return;
-  cont.innerHTML = '';
-  for (let i = 0; i < setsState.total; i++) {
-    const chip = document.createElement('div');
-    chip.className = 'chip';
-    const current = setsState.sets[i] ?? setsState.initialSets[i];
-    chip.textContent = current ? formatSetForDisplay(current, i) : `Set ${i + 1}`;
-    cont.appendChild(chip);
-  }
-}
-
-function formatSetForDisplay(set, idx) {
-  if (!set) return `Set ${idx + 1}`;
-  const normalized = normalizeSet(set);
-  const repsText = `${normalized.reps} reps`;
-  if (normalized.weight == null) return `Set ${idx + 1}: ${repsText}`;
-  return `Set ${idx + 1}: ${normalized.weight} ${normalized.unit || 'lb'}×${normalized.reps}`;
-}
-
-function commitSetsState() {
-  if (!setsState) return;
-  const finalSets = setsState.sets.slice(0, setsState.total).map((s) => {
-    const normalized = normalizeSet(s);
-    return { weight: normalized.weight, unit: normalized.unit, reps: normalized.reps };
-  });
-  if (setsState.entryKey) {
-    const entry = workoutDraft.entries.find(en => en.key === setsState.entryKey);
-    if (entry) entry.sets = finalSets;
-  } else {
-    workoutDraft.entries.push({ key: uid(), exerciseId: setsState.exerciseId, sets: finalSets });
-  }
-  setsState = null;
-  $('#sets-entry')?.classList.add('hidden');
+  const entry = createWorkoutDraftEntry(exerciseId, total);
+  workoutDraft.entries.push(entry);
   renderWorkoutPlan();
   scheduleWorkoutAutosave();
-}
-
-$('#btn-next-set').addEventListener('click', () => {
-  if (!setsState) return;
-  const repsVal = $('#reps-input')?.value ?? '';
-  const reps = parseInt(repsVal, 10);
-  if (!Number.isFinite(reps) || reps <= 0) {
-    alert('Please enter a valid positive number of reps.');
-    return;
-  }
-  const weightRaw = $('#weight-input')?.value ?? '';
-  let weight = null;
-  if (weightRaw !== '') {
-    const parsed = parseFloat(weightRaw);
-    if (!Number.isFinite(parsed)) {
-      alert('Please enter a valid weight.');
-      return;
-    }
-    weight = parsed;
-  }
-  const unit = ($('#weight-unit')?.value || 'lb');
-  setsState.sets[setsState.idx] = { weight, unit, reps };
-  lastUnit = unit;
-  localStorage.setItem('pi_unit', lastUnit);
-  setsState.idx++;
-  renderSetsProgress();
-  if (setsState.idx >= setsState.total) {
-    commitSetsState();
-    return;
-  }
-  updateSetLabel();
-  updateSetActionButton();
-  populateSetEntryFields();
-  $('#reps-input')?.focus();
 });
-
-$('#btn-cancel-sets').addEventListener('click', () => {
-  setsState = null;
-  $('#sets-entry')?.classList.add('hidden');
-});
-
-function beginEditEntry(entryKey) {
-  const entry = workoutDraft.entries.find(en => String(en.key) === String(entryKey));
-  if (!entry) return;
-  const initialSets = (entry.sets || []).map(s => ({ ...normalizeSet(s) }));
-  openSetsEntry({ exerciseId: entry.exerciseId, total: initialSets.length || 1, entryKey, initialSets });
-  const select = $('#select-exercise');
-  if (select) select.value = entry.exerciseId;
-}
 
 function renderWorkoutPlan() {
   const cont = $('#workout-plan');
@@ -645,21 +623,66 @@ function renderWorkoutPlan() {
   workoutDraft.entries.forEach((entry) => {
     if (!entry.key) entry.key = uid();
     const card = document.createElement('div');
-    card.className = 'item-row plan-entry';
+    card.className = `item-row plan-entry${entry.isExpanded ? ' expanded' : ''}${entry.skipped ? ' skipped' : ''}`;
     card.dataset.entryKey = entry.key;
     const exName = exById[entry.exerciseId]?.name || 'Unknown';
-    const setsSummary = (entry.sets || []).map((s, idx) => formatSetForDisplay(s, idx)).join(', ');
-    card.innerHTML = `
-      <div class="entry-main">
-        <button class="drag-handle" type="button" aria-label="Reorder"><span>⋮⋮</span></button>
-        <div class="entry-body">
-          <div><strong>${exName}</strong></div>
-          <div class="meta">${setsSummary || 'No sets yet.'}</div>
+    const summary = getEntrySummary(entry);
+    const setRowsHtml = (entry.sets || []).map((set, idx) => {
+      const normalized = normalizeSet(set);
+      return `
+        <div class="set-row">
+          <label class="field">
+            <span>Weight</span>
+            <input type="number" step="0.5" inputmode="decimal" data-entry-key="${entry.key}" data-set-index="${idx}" data-set-field="weight" value="${normalized.weight == null ? '' : escapeHtml(normalized.weight)}" />
+          </label>
+          <label class="field">
+            <span>Unit</span>
+            <select data-entry-key="${entry.key}" data-set-index="${idx}" data-set-field="unit">
+              ${renderUnitOptions(normalized.unit || lastUnit)}
+            </select>
+          </label>
+          <label class="field">
+            <span>Reps</span>
+            <input type="number" min="1" inputmode="numeric" data-entry-key="${entry.key}" data-set-index="${idx}" data-set-field="reps" value="${normalized.reps == null ? '' : escapeHtml(normalized.reps)}" />
+          </label>
+          <button class="btn sm ghost" type="button" data-remove-set="${entry.key}" data-set-index="${idx}">Remove Set</button>
         </div>
-      </div>
-      <div class="entry-actions">
-        <button class="btn sm ghost" data-edit-entry="${entry.key}">Edit</button>
-        <button class="btn sm danger" data-remove-entry="${entry.key}">Remove</button>
+      `;
+    }).join('');
+
+    card.innerHTML = `
+      <div class="entry-shell">
+        <div class="entry-head">
+          <div class="entry-main">
+            <button class="drag-handle" type="button" aria-label="Reorder"><span>⋮⋮</span></button>
+            <div class="entry-body">
+              <div class="entry-title-row">
+                <strong class="entry-title">${escapeHtml(exName)}</strong>
+                ${entry.skipped ? '<span class="status-badge">Skipped</span>' : ''}
+              </div>
+              <div class="meta">${escapeHtml(summary)}</div>
+            </div>
+          </div>
+          <div class="entry-actions">
+            <button class="btn sm ghost" type="button" data-toggle-entry="${entry.key}">${entry.isExpanded ? 'Collapse' : 'Expand'}</button>
+            <button class="btn sm ghost" type="button" data-toggle-skip="${entry.key}">${entry.skipped ? 'Undo Skip' : 'Mark Skipped'}</button>
+            <button class="btn sm danger" type="button" data-remove-entry="${entry.key}">Remove</button>
+          </div>
+        </div>
+        ${entry.isExpanded ? `
+          <div class="plan-entry-editor">
+            <div class="set-rows">
+              ${setRowsHtml || '<div class="meta">No sets yet. Add one below.</div>'}
+            </div>
+            <div class="row gap entry-editor-actions">
+              <button class="btn sm" type="button" data-add-set="${entry.key}">Add Set</button>
+            </div>
+            <label class="field exercise-comment">
+              <span>Comment</span>
+              <textarea rows="3" placeholder="Notes for this exercise" data-entry-key="${entry.key}" data-entry-field="comment">${escapeHtml(entry.comment || '')}</textarea>
+            </label>
+          </div>
+        ` : ''}
       </div>
     `;
     cont.appendChild(card);
@@ -672,20 +695,100 @@ const workoutPlanEl = document.getElementById('workout-plan');
 if (workoutPlanEl) {
   workoutPlanEl.addEventListener('pointerdown', handlePlanPointerDown);
   workoutPlanEl.addEventListener('click', handlePlanClick);
+  workoutPlanEl.addEventListener('input', handlePlanFieldChange);
+  workoutPlanEl.addEventListener('change', handlePlanFieldChange);
 }
 
 function handlePlanClick(e) {
-  const editKey = e.target?.getAttribute?.('data-edit-entry');
-  if (editKey) {
-    beginEditEntry(editKey);
+  const btn = e.target.closest('button');
+  if (!btn) return;
+
+  const toggleKey = btn.getAttribute('data-toggle-entry');
+  if (toggleKey) {
+    const entry = getEntryByKey(toggleKey);
+    if (!entry) return;
+    entry.isExpanded = !entry.isExpanded;
+    renderWorkoutPlan();
     return;
   }
-  const removeKey = e.target?.getAttribute?.('data-remove-entry');
+
+  const skipKey = btn.getAttribute('data-toggle-skip');
+  if (skipKey) {
+    const entry = getEntryByKey(skipKey);
+    if (!entry) return;
+    entry.skipped = !entry.skipped;
+    renderWorkoutPlan();
+    scheduleWorkoutAutosave();
+    return;
+  }
+
+  const addSetKey = btn.getAttribute('data-add-set');
+  if (addSetKey) {
+    const entry = getEntryByKey(addSetKey);
+    if (!entry) return;
+    const inheritedUnit = entry.sets[entry.sets.length - 1]?.unit || lastUnit;
+    entry.sets.push(createEmptySet(inheritedUnit));
+    renderWorkoutPlan();
+    scheduleWorkoutAutosave();
+    return;
+  }
+
+  const removeSetKey = btn.getAttribute('data-remove-set');
+  if (removeSetKey) {
+    const entry = getEntryByKey(removeSetKey);
+    const idx = parseInt(btn.getAttribute('data-set-index') || '-1', 10);
+    if (!entry || idx < 0) return;
+    entry.sets.splice(idx, 1);
+    renderWorkoutPlan();
+    scheduleWorkoutAutosave();
+    return;
+  }
+
+  const removeKey = btn.getAttribute('data-remove-entry');
   if (removeKey) {
     workoutDraft.entries = workoutDraft.entries.filter(en => String(en.key) !== String(removeKey));
     renderWorkoutPlan();
     scheduleWorkoutAutosave();
   }
+}
+
+function handlePlanFieldChange(e) {
+  const entryKey = e.target?.getAttribute?.('data-entry-key');
+  if (!entryKey) return;
+  const entry = getEntryByKey(entryKey);
+  if (!entry) return;
+
+  const entryField = e.target.getAttribute('data-entry-field');
+  if (entryField === 'comment') {
+    entry.comment = e.target.value;
+    scheduleWorkoutAutosave();
+    return;
+  }
+
+  const setField = e.target.getAttribute('data-set-field');
+  if (!setField) return;
+  const setIdx = parseInt(e.target.getAttribute('data-set-index') || '-1', 10);
+  if (setIdx < 0) return;
+
+  entry.sets[setIdx] = normalizeSet(entry.sets[setIdx]);
+
+  if (setField === 'weight') {
+    const raw = e.target.value;
+    const parsed = raw === '' ? null : Number(raw);
+    entry.sets[setIdx].weight = Number.isFinite(parsed) ? parsed : null;
+  }
+  if (setField === 'reps') {
+    const raw = e.target.value;
+    const parsed = raw === '' ? null : Number(raw);
+    entry.sets[setIdx].reps = Number.isFinite(parsed) ? parsed : null;
+  }
+  if (setField === 'unit') {
+    entry.sets[setIdx].unit = e.target.value || 'lb';
+    lastUnit = entry.sets[setIdx].unit;
+    localStorage.setItem('pi_unit', lastUnit);
+  }
+
+  scheduleWorkoutAutosave();
 }
 
 function handlePlanPointerDown(e) {
@@ -782,15 +885,16 @@ $('#btn-finish-workout').addEventListener('click', () => {
     if (nameInput) nameInput.value = workoutDraft.name;
   }
   confirmModal('Finish workout and save?', async () => {
-    const entriesForSave = workoutDraft.entries.map(({ key, ...rest }) => ({
-      ...rest,
-      sets: (rest.sets || []).map(s => ({
-        weight: s.weight == null ? null : s.weight,
-        unit: s.unit || 'lb',
-        reps: s.reps,
-      })),
-    }));
-    await Data.addWorkout({ id: uid(), name: workoutDraft.name.trim(), date: Date.now(), entries: entriesForSave });
+    const payload = {
+      name: workoutDraft.name.trim(),
+      date: workoutDraft.date || Date.now(),
+      entries: getWorkoutEntriesForSave(),
+    };
+    if (activeWorkoutId) {
+      await Data.updateWorkout(activeWorkoutId, payload);
+    } else {
+      await Data.addWorkout(payload);
+    }
     activeWorkoutId = null;
     resetWorkoutDraft();
     newWorkoutMode = 'chooser';
@@ -802,6 +906,16 @@ function indexById(arr) {
   return Object.fromEntries(arr.map(x => [x.id, x]));
 }
 
+const pastWorkoutsState = {
+  workouts: [],
+  exIdx: {},
+};
+
+const workoutsListEl = document.getElementById('workouts-list');
+if (workoutsListEl) {
+  workoutsListEl.addEventListener('click', handlePastWorkoutListClick);
+}
+
 // ---- Past Workouts ----
 async function renderWorkoutsList() {
   const list = $('#workouts-list');
@@ -809,6 +923,8 @@ async function renderWorkoutsList() {
   try { [workouts, exercises] = await Promise.all([Data.getWorkouts(), Data.getExercises()]); }
   catch (e) { return alertModal(`Cannot load workouts. ${e.message || e}`); }
   const exIdx = indexById(exercises);
+  pastWorkoutsState.workouts = workouts;
+  pastWorkoutsState.exIdx = exIdx;
   list.innerHTML = '';
   const detail = $('#workout-detail');
   detail.classList.add('hidden');
@@ -817,7 +933,7 @@ async function renderWorkoutsList() {
     row.className = 'item-row';
     row.innerHTML = `
       <div>
-        <div><strong>${w.name}</strong></div>
+        <div><strong>${escapeHtml(w.name)}</strong></div>
         <div class="meta">${fmtDate(w.date)} • ${w.entries.length} exercises</div>
       </div>
       <div class="row gap">
@@ -827,30 +943,28 @@ async function renderWorkoutsList() {
     `;
     list.appendChild(row);
   });
+}
 
-  list.addEventListener('click', handleOpenWorkout);
-  list.addEventListener('click', handleDeleteWorkout);
-
-  function handleOpenWorkout(e) {
-    const id = e.target.getAttribute('data-open-workout');
-    if (!id) return;
-    const w = workouts.find(x => String(x.id) === String(id));
-    if (!w) return;
-    renderWorkoutDetail(w, exIdx);
+function handlePastWorkoutListClick(e) {
+  const openBtn = e.target.closest('[data-open-workout]');
+  if (openBtn) {
+    const openId = openBtn.getAttribute('data-open-workout');
+    const workout = pastWorkoutsState.workouts.find(x => String(x.id) === String(openId));
+    if (workout) renderWorkoutDetail(workout, pastWorkoutsState.exIdx);
+    return;
   }
 
-  function handleDeleteWorkout(e) {
-    const id = e.target.getAttribute('data-del-workout');
-    if (!id) return;
-    confirmModal('Delete this workout? This cannot be undone.', async () => {
-      try {
-        await Data.deleteWorkout(id);
-        renderWorkoutsList();
-      } catch (err) {
-        alertModal(`Cannot delete workout. ${err.message || err}`);
-      }
-    });
-  }
+  const deleteBtn = e.target.closest('[data-del-workout]');
+  if (!deleteBtn) return;
+  const deleteId = deleteBtn.getAttribute('data-del-workout');
+  confirmModal('Delete this workout? This cannot be undone.', async () => {
+    try {
+      await Data.deleteWorkout(deleteId);
+      renderWorkoutsList();
+    } catch (err) {
+      alertModal(`Cannot delete workout. ${err.message || err}`);
+    }
+  });
 }
 
 function renderWorkoutDetail(w, exIdx) {
@@ -858,14 +972,27 @@ function renderWorkoutDetail(w, exIdx) {
   detail.classList.remove('hidden');
   detail.innerHTML = `
     <div class="row gap" style="justify-content: space-between;">
-      <h3 style="margin: 0;">${w.name}</h3>
+      <h3 style="margin: 0;">${escapeHtml(w.name)}</h3>
       <div class="meta">${fmtDate(w.date)}</div>
     </div>
     <div style="margin-top:8px; display:grid; gap:8px;">
-      ${w.entries.map(en => {
-        const exName = exIdx[en.exerciseId]?.name || 'Unknown';
-        const sets = (en.sets || []).map((s,i) => formatSetForDisplay(s, i)).join(', ');
-        return `<div class="item-row"><div><strong>${exName}</strong><div class=meta>${sets}</div></div></div>`;
+      ${(w.entries || []).map(rawEntry => {
+        const entry = normalizeEntry(rawEntry);
+        const exName = exIdx[entry.exerciseId]?.name || 'Unknown';
+        const setsText = escapeHtml(getEntrySetSummary(entry));
+        const comment = (entry.comment || '').trim();
+        return `
+          <div class="item-row past-entry${entry.skipped ? ' skipped' : ''}">
+            <div class="entry-body">
+              <div class="entry-title-row">
+                <strong class="entry-title">${escapeHtml(exName)}</strong>
+                ${entry.skipped ? '<span class="status-badge">Skipped</span>' : ''}
+              </div>
+              <div class="meta">${setsText}</div>
+              ${comment ? `<div class="meta comment-text">${escapeHtml(comment)}</div>` : ''}
+            </div>
+          </div>
+        `;
       }).join('')}
     </div>
   `;
@@ -914,7 +1041,9 @@ async function gatherExerciseProgress(exerciseId) {
 
   timeline.forEach((item, workoutIdx) => {
     (item.sets || []).forEach((s, sIdx) => {
-      const reps = typeof s === 'number' ? Number(s) : Number(s?.reps);
+      const reps = typeof s === 'number'
+        ? Number(s)
+        : (s?.reps === '' || s?.reps == null ? null : Number(s?.reps));
       const rawWeight = typeof s === 'number' ? null : (s?.weight ?? null);
       const unit = (typeof s === 'number' || !s || s.unit == null) ? 'lb' : s.unit;
       if (rawWeight == null || rawWeight === '') return;
@@ -1197,7 +1326,7 @@ document.addEventListener('click', async (e) => {
           (en.sets || []).forEach((s, i) => {
             let reps, weight, unit;
             if (typeof s === 'number') { reps = s; weight = ''; unit=''; }
-            else { reps = s.reps; weight = s.weight ?? ''; unit = s.unit || 'lb'; }
+            else { reps = s.reps ?? ''; weight = s.weight ?? ''; unit = s.unit || 'lb'; }
             const weightLb = unit === 'kg' && weight !== '' ? (Number(weight) * 2.20462) : weight;
             rows.push([
               w.id,
